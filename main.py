@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 from telegram import Update
-from telegram.ext import Updater, MessageHandler, Filters, CallbackContext
+from telegram.ext import Updater, MessageHandler, Filters, CallbackContext, CommandHandler
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # ======================
@@ -81,15 +81,48 @@ def check_users():
                 print(f"Error: {e}")
 
 # ======================
+# PRIVATE CHAT
+# ======================
+def start(update: Update, context: CallbackContext):
+    if update.message.chat.type == "private":
+        update.message.reply_text(
+            "🤖 Bot aktif!\n\n"
+            "Fitur:\n"
+            "✅ Auto kick member setelah 24 jam\n\n"
+            "Ketik 'ping' untuk cek status bot."
+        )
+
+def reply_private(update: Update, context: CallbackContext):
+    if update.message.chat.type == "private":
+        text = update.message.text.lower()
+
+        if "ping" in text:
+            update.message.reply_text("🏓 Pong! Bot aktif dan berjalan normal.")
+        else:
+            update.message.reply_text("Bot aktif ✅")
+
+# ======================
 # TELEGRAM SETUP
 # ======================
 updater = Updater(BOT_TOKEN, use_context=True)
 dp = updater.dispatcher
 
+# detect member join
 dp.add_handler(
     MessageHandler(
         Filters.status_update.new_chat_members,
         new_member
+    )
+)
+
+# command /start
+dp.add_handler(CommandHandler("start", start))
+
+# reply private chat
+dp.add_handler(
+    MessageHandler(
+        Filters.text & ~Filters.command,
+        reply_private
     )
 )
 
