@@ -1,12 +1,14 @@
 import os
+import asyncio
 import sqlite3
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
 
+from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     MessageHandler,
+    CommandHandler,
     ContextTypes,
     filters
 )
@@ -19,8 +21,11 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN tidak ditemukan")
+
 # ======================
-# DB
+# DATABASE
 # ======================
 conn = sqlite3.connect("users.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -34,45 +39,43 @@ CREATE TABLE IF NOT EXISTS users (
 conn.commit()
 
 # ======================
-# DETECT MEMBER JOIN
+# SAVE MEMBER JOIN
 # ======================
-async def on_member_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def on_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not update.message or not update.message.new_chat_members:
         return
 
     for user in update.message.new_chat_members:
 
-        user_id = user.id
-        join_time = datetime.utcnow().isoformat()
-
         cursor.execute(
             "INSERT OR REPLACE INTO users VALUES (?, ?)",
-            (user_id, join_time)
+            (user.id, datetime.utcnow().isoformat())
         )
         conn.commit()
 
-        print(f"[JOIN] {user_id} at {join_time}")
+        print(f"[JOIN] {user.id}")
 
 # ======================
-# AUTO KICK AFTER 24H
+# AUTO KICK SYSTEM
 # ======================
-async def check_kick(app):
+async def kick_scheduler(app):
 
     while True:
 
         now = datetime.utcnow()
 
         cursor.execute("SELECT user_id, join_time FROM users")
-        rows = cursor.fetchall()
+        users = cursor.fetchall()
 
-        for user_id, join_time in rows:
+        for user_id, join_time in users:
 
-            join_dt = datetime.fromisoformat(join_time)
+            join_time = datetime.fromisoformat(join_time)
 
-            if now - join_dt >= timedelta(hours=24):
+            if now - join_time >= timedelta(hours=24):
 
                 try:
+                    # BAN lalu UNBAN (biar bisa join lagi nanti)
                     await app.bot.ban_chat_member(
                         chat_id=GROUP_ID,
                         user_id=user_id
@@ -89,26 +92,32 @@ async def check_kick(app):
                     )
                     conn.commit()
 
-                    print(f"[KICKED] {user_id}")
+                    print(f"[KICKED 24H] {user_id}")
 
                 except Exception as e:
                     print(f"[ERROR] {e}")
 
-        await asyncio.sleep(60)  # check tiap 1 menit
+        await asyncio.sleep(60)
 
 # ======================
-# START BOT
+# COMMAND START
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Bot aktif")
+
+    if update.message.chat.type == "private":
+        await update.message.reply_text(
+            "🤖 Bot aktif\n\n"
+            "Fitur:\n"
+            "✔ Auto track member join\n"
+            "✔ Auto kick setelah 24 jam"
+        )
 
 # ======================
 # POST INIT
 # ======================
 async def post_init(app):
-    import asyncio
-    asyncio.create_task(check_kick(app))
-    print("Scheduler started")
+    asyncio.create_task(kick_scheduler(app))
+    print("Scheduler aktif")
 
 # ======================
 # MAIN
@@ -117,19 +126,19 @@ def main():
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # detect join (ALL METHOD: invite link + admin add)
+    # detect join (invite link + admin add)
     app.add_handler(
         MessageHandler(
             filters.StatusUpdate.NEW_CHAT_MEMBERS,
-            on_member_join
+            on_join
         )
     )
 
-    app.add_handler(MessageHandler(filters.COMMAND, start))
+    app.add_handler(CommandHandler("start", start))
 
     app.post_init = post_init
 
-    print("Bot running...")
+    print("BOT RUNNING...")
     app.run_polling()
 
 if __name__ == "__main__":
