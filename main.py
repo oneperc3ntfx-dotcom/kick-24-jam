@@ -23,7 +23,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 
 # ======================
-# DB
+# DATABASE
 # ======================
 conn = sqlite3.connect("users.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS users (
 conn.commit()
 
 # ======================
-# SAVE MEMBER JOIN
+# WELCOME + SAVE USER
 # ======================
 async def new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -45,6 +45,9 @@ async def new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for member in update.message.new_chat_members:
         user_id = member.id
+        name = member.first_name
+
+        # simpan user
         join_time = datetime.utcnow().isoformat()
 
         cursor.execute(
@@ -53,10 +56,17 @@ async def new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         conn.commit()
 
-        print(f"[JOIN] {user_id} at {join_time}")
+        # welcome message
+        await update.message.reply_text(
+            f"👋 Welcome {name}!\n\n"
+            "Selamat datang di grup 🚀\n"
+            "Silakan baca rules dan tetap aktif."
+        )
+
+        print(f"[JOIN] {user_id}")
 
 # ======================
-# AUTO KICK AFTER 24H
+# AUTO KICK 24 JAM
 # ======================
 async def check_users(app):
     while True:
@@ -70,32 +80,36 @@ async def check_users(app):
 
             if now - join_dt >= timedelta(hours=24):
                 try:
-                    await app.bot.ban_chat_member(chat_id=GROUP_ID, user_id=user_id)
-                    await app.bot.unban_chat_member(chat_id=GROUP_ID, user_id=user_id)
+                    await app.bot.ban_chat_member(
+                        chat_id=GROUP_ID,
+                        user_id=user_id
+                    )
+
+                    await app.bot.unban_chat_member(
+                        chat_id=GROUP_ID,
+                        user_id=user_id
+                    )
 
                     cursor.execute("DELETE FROM users WHERE user_id=?", (user_id,))
                     conn.commit()
 
-                    print(f"[KICK] {user_id}")
+                    print(f"[KICK 24H] {user_id}")
 
                 except Exception as e:
                     print("Kick error:", e)
 
-        await asyncio.sleep(60)  # cek tiap 1 menit
+        await asyncio.sleep(60)
 
 # ======================
-# PRIVATE CHAT
+# COMMANDS (OPTIONAL)
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
-        await update.message.reply_text(
-            "🤖 Bot aktif\n"
-            "• Auto kick member 24 jam\n"
-        )
+        await update.message.reply_text("🤖 Bot aktif")
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
-        await update.message.reply_text("🏓 Bot aktif")
+        await update.message.reply_text("🏓 Pong")
 
 # ======================
 # BACKGROUND TASK
@@ -110,9 +124,12 @@ async def post_init(app):
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # handler join member (SEMUA CARA JOIN)
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_member))
+    # detect member join (invite / admin add)
+    app.add_handler(
+        MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_member)
+    )
 
+    # private commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ping", ping))
 
