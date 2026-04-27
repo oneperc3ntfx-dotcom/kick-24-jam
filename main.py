@@ -4,8 +4,12 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 from telegram import Update
-from telegram.ext import Updater, MessageHandler, Filters, CallbackContext, CommandHandler
-from apscheduler.schedulers.background import BackgroundScheduler
+from telegram.ext import (
+    ApplicationBuilder,
+    MessageHandler,
+    ContextTypes,
+    filters
+)
 
 # ======================
 # LOAD ENV
@@ -16,7 +20,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 
 # ======================
-# DATABASE
+# DB
 # ======================
 conn = sqlite3.connect("users.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -30,12 +34,17 @@ CREATE TABLE IF NOT EXISTS users (
 conn.commit()
 
 # ======================
-# USER JOIN
+# DETECT MEMBER JOIN
 # ======================
-def new_member(update: Update, context: CallbackContext):
-    for member in update.message.new_chat_members:
-        user_id = member.id
-        join_time = datetime.now().isoformat()
+async def on_member_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not update.message or not update.message.new_chat_members:
+        return
+
+    for user in update.message.new_chat_members:
+
+        user_id = user.id
+        join_time = datetime.utcnow().isoformat()
 
         cursor.execute(
             "INSERT OR REPLACE INTO users VALUES (?, ?)",
@@ -43,100 +52,85 @@ def new_member(update: Update, context: CallbackContext):
         )
         conn.commit()
 
-        print(f"{user_id} joined")
+        print(f"[JOIN] {user_id} at {join_time}")
 
 # ======================
-# CHECK 24 JAM
+# AUTO KICK AFTER 24H
 # ======================
-def check_users():
-    now = datetime.now()
+async def check_kick(app):
 
-    cursor.execute("SELECT user_id, join_time FROM users")
-    rows = cursor.fetchall()
+    while True:
 
-    for user_id, join_time in rows:
-        join_time = datetime.fromisoformat(join_time)
+        now = datetime.utcnow()
 
-        if now - join_time > timedelta(hours=24):
-            try:
-                updater.bot.kick_chat_member(
-                    chat_id=GROUP_ID,
-                    user_id=user_id
-                )
+        cursor.execute("SELECT user_id, join_time FROM users")
+        rows = cursor.fetchall()
 
-                updater.bot.unban_chat_member(
-                    chat_id=GROUP_ID,
-                    user_id=user_id
-                )
+        for user_id, join_time in rows:
 
-                cursor.execute(
-                    "DELETE FROM users WHERE user_id=?",
-                    (user_id,)
-                )
-                conn.commit()
+            join_dt = datetime.fromisoformat(join_time)
 
-                print(f"{user_id} kicked after 24 hours")
+            if now - join_dt >= timedelta(hours=24):
 
-            except Exception as e:
-                print(f"Error: {e}")
+                try:
+                    await app.bot.ban_chat_member(
+                        chat_id=GROUP_ID,
+                        user_id=user_id
+                    )
+
+                    await app.bot.unban_chat_member(
+                        chat_id=GROUP_ID,
+                        user_id=user_id
+                    )
+
+                    cursor.execute(
+                        "DELETE FROM users WHERE user_id=?",
+                        (user_id,)
+                    )
+                    conn.commit()
+
+                    print(f"[KICKED] {user_id}")
+
+                except Exception as e:
+                    print(f"[ERROR] {e}")
+
+        await asyncio.sleep(60)  # check tiap 1 menit
 
 # ======================
-# PRIVATE CHAT
+# START BOT
 # ======================
-def start(update: Update, context: CallbackContext):
-    if update.message.chat.type == "private":
-        update.message.reply_text(
-            "🤖 Bot aktif!\n\n"
-            "Fitur:\n"
-            "✅ Auto kick member setelah 24 jam\n\n"
-            "Ketik 'ping' untuk cek status bot."
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Bot aktif")
+
+# ======================
+# POST INIT
+# ======================
+async def post_init(app):
+    import asyncio
+    asyncio.create_task(check_kick(app))
+    print("Scheduler started")
+
+# ======================
+# MAIN
+# ======================
+def main():
+
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    # detect join (ALL METHOD: invite link + admin add)
+    app.add_handler(
+        MessageHandler(
+            filters.StatusUpdate.NEW_CHAT_MEMBERS,
+            on_member_join
         )
-
-def reply_private(update: Update, context: CallbackContext):
-    if update.message.chat.type == "private":
-        text = update.message.text.lower()
-
-        if "ping" in text:
-            update.message.reply_text("🏓 Pong! Bot aktif dan berjalan normal.")
-        else:
-            update.message.reply_text("Bot aktif ✅")
-
-# ======================
-# TELEGRAM SETUP
-# ======================
-updater = Updater(BOT_TOKEN, use_context=True)
-dp = updater.dispatcher
-
-# detect member join
-dp.add_handler(
-    MessageHandler(
-        Filters.status_update.new_chat_members,
-        new_member
     )
-)
 
-# command /start
-dp.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.COMMAND, start))
 
-# reply private chat
-dp.add_handler(
-    MessageHandler(
-        Filters.text & ~Filters.command,
-        reply_private
-    )
-)
+    app.post_init = post_init
 
-# ======================
-# SCHEDULER
-# ======================
-scheduler = BackgroundScheduler()
-scheduler.add_job(check_users, "interval", minutes=5)
-scheduler.start()
+    print("Bot running...")
+    app.run_polling()
 
-print("Bot running...")
-
-# ======================
-# RUN BOT
-# ======================
-updater.start_polling()
-updater.idle()
+if __name__ == "__main__":
+    main()
