@@ -21,6 +21,7 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
+ADMIN_ID = int(os.getenv("AUTHORIZED_USER_ID", "0"))
 
 # ======================
 # DATABASE
@@ -37,7 +38,7 @@ CREATE TABLE IF NOT EXISTS users (
 conn.commit()
 
 # ======================
-# WELCOME + SAVE USER
+# JOIN DETECTION + WELCOME
 # ======================
 async def new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -47,7 +48,6 @@ async def new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = member.id
         name = member.first_name
 
-        # simpan user
         join_time = datetime.utcnow().isoformat()
 
         cursor.execute(
@@ -56,11 +56,10 @@ async def new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         conn.commit()
 
-        # welcome message
         await update.message.reply_text(
             f"👋 Welcome {name}!\n\n"
             "Selamat datang di grup 🚀\n"
-            "Silakan baca rules dan tetap aktif."
+            "Kamu akan otomatis dievaluasi selama 24 jam."
         )
 
         print(f"[JOIN] {user_id}")
@@ -90,10 +89,13 @@ async def check_users(app):
                         user_id=user_id
                     )
 
-                    cursor.execute("DELETE FROM users WHERE user_id=?", (user_id,))
+                    cursor.execute(
+                        "DELETE FROM users WHERE user_id=?",
+                        (user_id,)
+                    )
                     conn.commit()
 
-                    print(f"[KICK 24H] {user_id}")
+                    print(f"[KICK] {user_id}")
 
                 except Exception as e:
                     print("Kick error:", e)
@@ -101,7 +103,36 @@ async def check_users(app):
         await asyncio.sleep(60)
 
 # ======================
-# COMMANDS (OPTIONAL)
+# /MEMBER COMMAND
+# ======================
+async def member_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_user.id != ADMIN_ID:
+        return await update.message.reply_text("❌ No access")
+
+    cursor.execute("SELECT user_id, join_time FROM users")
+    rows = cursor.fetchall()
+
+    if not rows:
+        return await update.message.reply_text("Tidak ada member aktif")
+
+    text = "👥 LIST MEMBER AKTIF\n\n"
+
+    for user_id, join_time in rows:
+        join_dt = datetime.fromisoformat(join_time)
+        kick_time = join_dt + timedelta(hours=24)
+
+        text += (
+            f"🆔 {user_id}\n"
+            f"⏰ Join: {join_dt.strftime('%Y-%m-%d %H:%M')}\n"
+            f"⛔ Kick: {kick_time.strftime('%Y-%m-%d %H:%M')}\n"
+            "━━━━━━━━━━━━━━\n"
+        )
+
+    await update.message.reply_text(text)
+
+# ======================
+# PRIVATE COMMANDS
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
@@ -124,12 +155,13 @@ async def post_init(app):
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # detect member join (invite / admin add)
+    # detect join
     app.add_handler(
         MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_member)
     )
 
-    # private commands
+    # commands
+    app.add_handler(CommandHandler("member", member_list))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ping", ping))
 
