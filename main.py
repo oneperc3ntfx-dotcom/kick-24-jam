@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 import os
 import sqlite3
 import asyncio
@@ -25,13 +24,13 @@ from telegram.ext import (
 )
 
 # ======================
-# LOAD ENV
+# ENV
 # ======================
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
-ADMIN_ID = int(os.getenv("AUTHORIZED_USER_ID"))
+ADMIN_ID = int(os.getenv("AUTHORIZED_USER_ID", "0"))
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN missing")
@@ -43,7 +42,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MEMBER-BOT")
 
 # ======================
-# DATABASE
+# DB
 # ======================
 conn = sqlite3.connect("users.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -58,7 +57,6 @@ CREATE TABLE IF NOT EXISTS users (
     status TEXT
 )
 """)
-
 conn.commit()
 
 # ======================
@@ -74,159 +72,74 @@ PLAN_MAP = {
 # SAVE USER
 # ======================
 def save_user(user_id, username, full_name):
-
-    cursor.execute(
-        "SELECT user_id FROM users WHERE user_id=?",
-        (user_id,)
-    )
-
-    existing = cursor.fetchone()
-
-    if existing:
+    cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
+    if cursor.fetchone():
         return False
 
-    join_time = datetime.utcnow().isoformat()
-
     cursor.execute("""
-        INSERT INTO users
-        (user_id, username, full_name, join_time, expire_time, status)
+        INSERT INTO users (user_id, username, full_name, join_time, expire_time, status)
         VALUES (?, ?, ?, ?, ?, ?)
     """, (
         user_id,
         username,
         full_name,
-        join_time,
+        datetime.utcnow().isoformat(),
         None,
         "ACTIVE"
     ))
 
     conn.commit()
-
     return True
 
 # ======================
-# SEND ADMIN BUTTON
+# ADMIN PANEL
 # ======================
 async def send_admin_panel(context, user_id, full_name, username):
 
     keyboard = [
         [
-            InlineKeyboardButton(
-                "7 Hari",
-                callback_data=f"plan_7d_{user_id}"
-            ),
-            InlineKeyboardButton(
-                "1 Bulan",
-                callback_data=f"plan_1m_{user_id}"
-            ),
-            InlineKeyboardButton(
-                "1 Tahun",
-                callback_data=f"plan_1y_{user_id}"
-            ),
+            InlineKeyboardButton("7 Hari", callback_data=f"plan_7d_{user_id}"),
+            InlineKeyboardButton("1 Bulan", callback_data=f"plan_1m_{user_id}"),
+            InlineKeyboardButton("1 Tahun", callback_data=f"plan_1y_{user_id}")
         ]
     ]
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    text = (
-        f"👤 MEMBER BARU JOIN\n\n"
-        f"🆔 ID: {user_id}\n"
-        f"👤 Nama: {full_name}\n"
-        f"📛 Username: @{username if username else '-'}\n\n"
-        f"Pilih durasi member:"
-    )
-
     await context.bot.send_message(
         chat_id=ADMIN_ID,
-        text=text,
-        reply_markup=reply_markup
+        text=f"👤 MEMBER BARU\n\nID: {user_id}\nNama: {full_name}",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 # ======================
-# DETECT MEMBER JOIN
-# ======================
-async def new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if not update.message:
-        return
-
-    if not update.message.new_chat_members:
-        return
-
-    for member in update.message.new_chat_members:
-
-        # skip bot
-        if member.is_bot:
-            continue
-
-        user_id = member.id
-        username = member.username
-        full_name = member.full_name
-
-        is_new = save_user(
-            user_id,
-            username,
-            full_name
-        )
-
-        if not is_new:
-            continue
-
-        logger.info(f"NEW MEMBER: {user_id}")
-
-        # welcome message
-        await update.message.reply_text(
-            f"👋 Welcome {full_name}\n\n"
-            f"Selamat datang di grup 🚀"
-        )
-
-        # send to admin
-        await send_admin_panel(
-            context,
-            user_id,
-            full_name,
-            username
-        )
-
-# ======================
-# DETECT INVITE LINK JOIN
+# FIXED JOIN DETECTOR (INI YANG PENTING)
 # ======================
 async def member_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     result = update.chat_member
+    old = result.old_chat_member.status
+    new = result.new_chat_member.status
 
-    old_status = result.old_chat_member.status
-    new_status = result.new_chat_member.status
+    user = result.new_chat_member.user
 
-    # detect real join
-    if old_status in ["left", "kicked"] and new_status in ["member", "administrator"]:
+    # detect JOIN semua jenis
+    if old in ["left", "kicked"] and new in ["member", "administrator"]:
 
-        member = result.new_chat_member.user
-
-        if member.is_bot:
+        if user.is_bot:
             return
 
-        user_id = member.id
-        username = member.username
-        full_name = member.full_name
+        user_id = user.id
+        username = user.username
+        full_name = user.full_name
 
-        is_new = save_user(
-            user_id,
-            username,
-            full_name
-        )
+        if save_user(user_id, username, full_name):
+            logger.info(f"JOIN DETECTED: {user_id}")
 
-        if not is_new:
-            return
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"👋 Welcome {full_name}"
+            )
 
-        logger.info(f"INVITE JOIN: {user_id}")
-
-        await send_admin_panel(
-            context,
-            user_id,
-            full_name,
-            username
-        )
+            await send_admin_panel(context, user_id, full_name, username)
 
 # ======================
 # BUTTON HANDLER
@@ -239,98 +152,48 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.from_user.id != ADMIN_ID:
         return await query.answer("No access", show_alert=True)
 
-    try:
-        _, plan, user_id = query.data.split("_")
+    _, plan, user_id = query.data.split("_")
+    user_id = int(user_id)
 
-        user_id = int(user_id)
-
-    except:
-        return
-
-    days = PLAN_MAP.get(plan)
-
-    if not days:
-        return
-
+    days = PLAN_MAP.get(plan, 7)
     expire_time = datetime.utcnow() + timedelta(days=days)
 
     cursor.execute("""
-        UPDATE users
-        SET expire_time=?
-        WHERE user_id=?
-    """, (
-        expire_time.isoformat(),
-        user_id
-    ))
-
+        UPDATE users SET expire_time=? WHERE user_id=?
+    """, (expire_time.isoformat(), user_id))
     conn.commit()
 
     await query.edit_message_text(
-        f"✅ Membership updated\n\n"
-        f"🆔 User: {user_id}\n"
-        f"📅 Plan: {days} hari\n"
-        f"⛔ Expire: {expire_time.strftime('%Y-%m-%d %H:%M UTC')}"
+        f"✅ Set {days} hari untuk {user_id}"
     )
 
 # ======================
-# AUTO KICK SYSTEM
+# AUTO KICK
 # ======================
 async def checker(app):
 
     while True:
+        now = datetime.utcnow()
 
-        try:
+        cursor.execute("SELECT user_id, expire_time FROM users WHERE expire_time IS NOT NULL")
+        rows = cursor.fetchall()
 
-            now = datetime.utcnow()
+        for user_id, exp in rows:
 
-            cursor.execute("""
-                SELECT user_id, expire_time
-                FROM users
-                WHERE expire_time IS NOT NULL
-            """)
+            exp_dt = datetime.fromisoformat(exp)
 
-            rows = cursor.fetchall()
+            if now >= exp_dt:
+                try:
+                    await app.bot.ban_chat_member(GROUP_ID, user_id)
+                    await app.bot.unban_chat_member(GROUP_ID, user_id)
 
-            for user_id, expire_time in rows:
+                    cursor.execute("DELETE FROM users WHERE user_id=?", (user_id,))
+                    conn.commit()
 
-                exp = datetime.fromisoformat(expire_time)
+                    logger.info(f"KICKED {user_id}")
 
-                if now >= exp:
-
-                    try:
-
-                        # BAN
-                        await app.bot.ban_chat_member(
-                            chat_id=GROUP_ID,
-                            user_id=user_id
-                        )
-
-                        # UNBAN
-                        await app.bot.unban_chat_member(
-                            chat_id=GROUP_ID,
-                            user_id=user_id
-                        )
-
-                        cursor.execute(
-                            "DELETE FROM users WHERE user_id=?",
-                            (user_id,)
-                        )
-
-                        conn.commit()
-
-                        logger.info(f"KICKED: {user_id}")
-
-                        # notify admin
-                        await app.bot.send_message(
-                            chat_id=ADMIN_ID,
-                            text=f"⛔ Member expired & kicked\n\nUser ID: {user_id}"
-                        )
-
-                    except Exception as e:
-                        logger.error(f"KICK ERROR {user_id}: {e}")
-
-        except Exception as e:
-            logger.error(f"CHECKER ERROR: {e}")
+                except Exception as e:
+                    logger.error(f"KICK ERROR {e}")
 
         await asyncio.sleep(60)
 
@@ -340,41 +203,15 @@ async def checker(app):
 async def member_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if update.effective_user.id != ADMIN_ID:
-        return await update.message.reply_text("❌ No access")
+        return await update.message.reply_text("No access")
 
-    cursor.execute("""
-        SELECT user_id, username, full_name, join_time, expire_time
-        FROM users
-        ORDER BY join_time DESC
-    """)
-
+    cursor.execute("SELECT * FROM users")
     rows = cursor.fetchall()
-
-    if not rows:
-        return await update.message.reply_text("Tidak ada member")
 
     text = "👥 MEMBER LIST\n\n"
 
-    for row in rows:
-
-        user_id, username, full_name, join_time, expire_time = row
-
-        join_dt = datetime.fromisoformat(join_time)
-
-        if expire_time:
-            exp_dt = datetime.fromisoformat(expire_time)
-            exp_text = exp_dt.strftime("%Y-%m-%d %H:%M")
-        else:
-            exp_text = "Belum dipilih"
-
-        text += (
-            f"🆔 {user_id}\n"
-            f"👤 {full_name}\n"
-            f"📛 @{username if username else '-'}\n"
-            f"📥 Join: {join_dt.strftime('%Y-%m-%d %H:%M')}\n"
-            f"⛔ Expire: {exp_text}\n"
-            f"━━━━━━━━━━━━━━\n"
-        )
+    for r in rows:
+        text += f"ID: {r[0]}\nName: {r[2]}\nExpire: {r[4]}\n━━━━━━━━━━\n"
 
     await update.message.reply_text(text[:4000])
 
@@ -382,19 +219,14 @@ async def member_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # START
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    await update.message.reply_text(
-        "🤖 Member Manager Bot Active"
-    )
+    await update.message.reply_text("Bot aktif")
 
 # ======================
-# POST INIT
+# INIT
 # ======================
 async def post_init(app):
-
     asyncio.create_task(checker(app))
-
-    logger.info("Checker running...")
+    logger.info("BOT RUNNING...")
 
 # ======================
 # MAIN
@@ -403,46 +235,16 @@ def main():
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # detect normal join
-    app.add_handler(
-        MessageHandler(
-            filters.StatusUpdate.NEW_CHAT_MEMBERS,
-            new_member
-        )
-    )
+    # 🔥 FIX IMPORTANT: detect join semua tipe
+    app.add_handler(ChatMemberHandler(member_update, ChatMemberHandler.CHAT_MEMBER))
 
-    # detect invite link / manual invite
-    app.add_handler(
-        ChatMemberHandler(
-            member_update,
-            ChatMemberHandler.CHAT_MEMBER
-        )
-    )
-
-    # buttons
-    app.add_handler(
-        CallbackQueryHandler(button_handler)
-    )
-
-    # commands
-    app.add_handler(
-        CommandHandler("member", member_list)
-    )
-
-    app.add_handler(
-        CommandHandler("start", start)
-    )
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(CommandHandler("member", member_list))
+    app.add_handler(CommandHandler("start", start))
 
     app.post_init = post_init
 
-    logger.info("BOT RUNNING...")
+    app.run_polling(drop_pending_updates=True)
 
-    app.run_polling(
-        drop_pending_updates=True
-    )
-
-# ======================
-# START
-# ======================
 if __name__ == "__main__":
     main()
