@@ -20,7 +20,6 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
     ChatMemberHandler,
-    filters,
 )
 
 # ======================
@@ -72,6 +71,7 @@ PLAN_MAP = {
 # SAVE USER
 # ======================
 def save_user(user_id, username, full_name):
+
     cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
     if cursor.fetchone():
         return False
@@ -111,18 +111,20 @@ async def send_admin_panel(context, user_id, full_name, username):
     )
 
 # ======================
-# FIXED JOIN DETECTOR (INI YANG PENTING)
+# 🔥 FIXED: DETECT SEMUA JOIN (INCL SILENT + INVITE + ADMIN ADD)
 # ======================
 async def member_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    result = update.chat_member
-    old = result.old_chat_member.status
-    new = result.new_chat_member.status
+    cm = update.chat_member
 
-    user = result.new_chat_member.user
+    old = cm.old_chat_member.status
+    new = cm.new_chat_member.status
+    user = cm.new_chat_member.user
 
-    # detect JOIN semua jenis
-    if old in ["left", "kicked"] and new in ["member", "administrator"]:
+    logger.info(f"CHAT EVENT: {old} -> {new} | {user.id}")
+
+    # semua jenis join
+    if new in ["member", "administrator"] and old in ["left", "kicked"]:
 
         if user.is_bot:
             return
@@ -132,17 +134,22 @@ async def member_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
         full_name = user.full_name
 
         if save_user(user_id, username, full_name):
+
             logger.info(f"JOIN DETECTED: {user_id}")
 
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=f"👋 Welcome {full_name}"
-            )
+            # optional message ke group (silent join tetap ter-handle)
+            try:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"👋 Welcome {full_name}"
+                )
+            except:
+                pass
 
             await send_admin_panel(context, user_id, full_name, username)
 
 # ======================
-# BUTTON HANDLER
+# BUTTON
 # ======================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -156,16 +163,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = int(user_id)
 
     days = PLAN_MAP.get(plan, 7)
-    expire_time = datetime.utcnow() + timedelta(days=days)
+    exp = datetime.utcnow() + timedelta(days=days)
 
     cursor.execute("""
         UPDATE users SET expire_time=? WHERE user_id=?
-    """, (expire_time.isoformat(), user_id))
+    """, (exp.isoformat(), user_id))
     conn.commit()
 
-    await query.edit_message_text(
-        f"✅ Set {days} hari untuk {user_id}"
-    )
+    await query.edit_message_text(f"✅ Set {days} hari untuk {user_id}")
 
 # ======================
 # AUTO KICK
@@ -193,7 +198,7 @@ async def checker(app):
                     logger.info(f"KICKED {user_id}")
 
                 except Exception as e:
-                    logger.error(f"KICK ERROR {e}")
+                    logger.error(f"KICK ERROR: {e}")
 
         await asyncio.sleep(60)
 
@@ -235,8 +240,9 @@ def main():
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # 🔥 FIX IMPORTANT: detect join semua tipe
+    # 🔥 FIX PENTING: pakai 2 mode sekaligus
     app.add_handler(ChatMemberHandler(member_update, ChatMemberHandler.CHAT_MEMBER))
+    app.add_handler(ChatMemberHandler(member_update, ChatMemberHandler.MY_CHAT_MEMBER))
 
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(CommandHandler("member", member_list))
