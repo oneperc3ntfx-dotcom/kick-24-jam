@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 import os
 import sqlite3
 import asyncio
@@ -6,7 +7,12 @@ import logging
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
+
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -23,16 +29,24 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = int(os.getenv("GROUP_ID"))
 ADMIN_ID = int(os.getenv("AUTHORIZED_USER_ID"))
 
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN missing")
+
 # ======================
-# LOG
+# LOGGING
 # ======================
 logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger("MEMBER-BOT")
 
 # ======================
-# DB
+# DATABASE
 # ======================
-conn = sqlite3.connect("users.db", check_same_thread=False)
+conn = sqlite3.connect(
+    "users.db",
+    check_same_thread=False
+)
+
 cursor = conn.cursor()
 
 cursor.execute("""
@@ -41,24 +55,46 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT,
     full_name TEXT,
     join_time TEXT,
-    expire_time TEXT
+    expire_time TEXT,
+    plan TEXT
 )
 """)
+
 conn.commit()
 
 # ======================
 # PLAN MAP
 # ======================
 PLAN = {
-    "7d": 7,
-    "1m": 30,
-    "1y": 365
+    "24h": {
+        "days": 1,
+        "label": "24 Jam"
+    },
+
+    "7d": {
+        "days": 7,
+        "label": "7 Hari"
+    },
+
+    "1m": {
+        "days": 30,
+        "label": "1 Bulan"
+    },
+
+    "1y": {
+        "days": 365,
+        "label": "1 Tahun"
+    }
 }
 
 # ======================
-# TEMP STORAGE
+# /START
 # ======================
-pending = {}
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    await update.message.reply_text(
+        "🤖 MEMBER BOT ACTIVE"
+    )
 
 # ======================
 # /ADD USER
@@ -69,21 +105,53 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not context.args:
-        return await update.message.reply_text("Usage: /add <user_id>")
 
-    user_id = int(context.args[0])
-    pending[user_id] = True
+        return await update.message.reply_text(
+            "Usage:\n/add USER_ID"
+        )
+
+    try:
+        user_id = int(context.args[0])
+
+    except:
+        return await update.message.reply_text(
+            "USER ID invalid"
+        )
 
     keyboard = [
         [
-            InlineKeyboardButton("7 Hari", callback_data=f"plan_7d_{user_id}"),
-            InlineKeyboardButton("1 Bulan", callback_data=f"plan_1m_{user_id}"),
-            InlineKeyboardButton("1 Tahun", callback_data=f"plan_1y_{user_id}")
+            InlineKeyboardButton(
+                "24 Jam",
+                callback_data=f"plan_24h_{user_id}"
+            ),
+
+            InlineKeyboardButton(
+                "7 Hari",
+                callback_data=f"plan_7d_{user_id}"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "1 Bulan",
+                callback_data=f"plan_1m_{user_id}"
+            ),
+
+            InlineKeyboardButton(
+                "1 Tahun",
+                callback_data=f"plan_1y_{user_id}"
+            )
         ]
     ]
 
     await update.message.reply_text(
-        f"Set plan untuk user: {user_id}",
+        f"""
+👤 SET MEMBER
+
+🆔 USER ID: {user_id}
+
+Pilih durasi membership:
+""",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -93,83 +161,176 @@ async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     q = update.callback_query
+
     await q.answer()
 
     if q.from_user.id != ADMIN_ID:
         return
 
-    _, plan, user_id = q.data.split("_")
-    user_id = int(user_id)
+    try:
 
-    days = PLAN[plan]
-    expire = datetime.utcnow() + timedelta(days=days)
+        _, plan_key, user_id = q.data.split("_")
 
-    # save DB
+        user_id = int(user_id)
+
+    except:
+        return
+
+    if plan_key not in PLAN:
+        return
+
+    days = PLAN[plan_key]["days"]
+    label = PLAN[plan_key]["label"]
+
+    now = datetime.utcnow()
+
+    expire = now + timedelta(days=days)
+
+    # ======================
+    # SAVE DB
+    # ======================
     cursor.execute("""
-        INSERT OR REPLACE INTO users VALUES (?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO users
+        VALUES (?, ?, ?, ?, ?, ?)
     """, (
         user_id,
         "unknown",
         "unknown",
-        datetime.utcnow().isoformat(),
-        expire.isoformat()
+        now.isoformat(),
+        expire.isoformat(),
+        label
     ))
+
     conn.commit()
 
     # ======================
-    # 🔥 SINGLE USE INVITE LINK (FIX INTI)
+    # CREATE SINGLE USE LINK
     # ======================
     invite = await context.bot.create_chat_invite_link(
         chat_id=GROUP_ID,
-        member_limit=1,  # sekali pakai
-        expire_date=datetime.utcnow() + timedelta(minutes=2)  # auto mati cepat
+
+        member_limit=1,
+
+        expire_date=now + timedelta(minutes=2)
     )
 
+    # ======================
+    # SEND RESULT
+    # ======================
     await q.edit_message_text(
         f"""
-✅ MEMBER SET
+✅ MEMBER BERHASIL DIBUAT
 
-ID: {user_id}
-Plan: {days} hari
-Expire: {expire}
+🆔 USER ID:
+{user_id}
 
-🔗 SINGLE USE INVITE LINK:
+📦 PLAN:
+{label}
+
+⏰ EXPIRE:
+{expire.strftime('%Y-%m-%d %H:%M UTC')}
+
+🔗 LINK INVITE:
 {invite.invite_link}
 
-⚠️ Link hanya bisa dipakai 1 kali & aktif 2 menit
+⚠️ Link hanya bisa dipakai 1x
+⚠️ Link expired dalam 2 menit
+⚠️ Member auto kick saat expired
 """
     )
 
 # ======================
-# AUTO KICK EXPIRED
+# AUTO KICK
 # ======================
 async def checker(app):
 
     while True:
-        now = datetime.utcnow()
 
-        cursor.execute("SELECT user_id, expire_time FROM users")
-        rows = cursor.fetchall()
+        try:
 
-        for user_id, exp in rows:
+            now = datetime.utcnow()
 
-            if not exp:
-                continue
+            cursor.execute("""
+                SELECT user_id, expire_time
+                FROM users
+            """)
 
-            exp_dt = datetime.fromisoformat(exp)
+            rows = cursor.fetchall()
 
-            if now >= exp_dt:
-                try:
-                    await app.bot.ban_chat_member(GROUP_ID, user_id)
-                    await app.bot.unban_chat_member(GROUP_ID, user_id)
+            for row in rows:
 
-                    cursor.execute("DELETE FROM users WHERE user_id=?", (user_id,))
-                    conn.commit()
+                user_id = row[0]
+                expire_time = row[1]
 
-                    logger.info(f"KICKED {user_id}")
+                if not expire_time:
+                    continue
 
-                except Exception as e:
-                    logger.error(e)
+                exp_dt = datetime.fromisoformat(
+                    expire_time
+                )
+
+                # ======================
+                # EXPIRED
+                # ======================
+                if now >= exp_dt:
+
+                    try:
+
+                        # BAN
+                        await app.bot.ban_chat_member(
+                            chat_id=GROUP_ID,
+                            user_id=user_id
+                        )
+
+                        # UNBAN
+                        await app.bot.unban_chat_member(
+                            chat_id=GROUP_ID,
+                            user_id=user_id
+                        )
+
+                        # DELETE DB
+                        cursor.execute("""
+                            DELETE FROM users
+                            WHERE user_id=?
+                        """, (
+                            user_id,
+                        ))
+
+                        conn.commit()
+
+                        logger.info(
+                            f"KICKED {user_id}"
+                        )
+
+                        # NOTIFY ADMIN
+                        try:
+
+                            await app.bot.send_message(
+                                chat_id=ADMIN_ID,
+                                text=f"""
+⛔ MEMBER EXPIRED
+
+🆔 USER:
+{user_id}
+
+Member berhasil di kick otomatis
+"""
+                            )
+
+                        except:
+                            pass
+
+                    except Exception as e:
+
+                        logger.error(
+                            f"KICK ERROR {e}"
+                        )
+
+        except Exception as e:
+
+            logger.error(
+                f"CHECKER ERROR {e}"
+            )
 
         await asyncio.sleep(30)
 
@@ -181,54 +342,90 @@ async def member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    cursor.execute("SELECT * FROM users")
+    cursor.execute("""
+        SELECT *
+        FROM users
+        ORDER BY expire_time ASC
+    """)
+
     rows = cursor.fetchall()
 
     if not rows:
-        return await update.message.reply_text("No member")
+
+        return await update.message.reply_text(
+            "Tidak ada member"
+        )
 
     text = "👥 MEMBER LIST\n\n"
 
     for r in rows:
-        user_id, username, name, join, exp = r
+
+        user_id = r[0]
+        username = r[1]
+        full_name = r[2]
+        join_time = r[3]
+        expire_time = r[4]
+        plan = r[5]
 
         text += (
-            f"ID: {user_id}\n"
-            f"Name: {name}\n"
-            f"Expire: {exp}\n"
-            f"━━━━━━━━━━\n"
+            f"🆔 ID: {user_id}\n"
+            f"📦 Plan: {plan}\n"
+            f"📅 Expire: {expire_time}\n"
+            f"━━━━━━━━━━━━━━\n"
         )
 
-    await update.message.reply_text(text[:4000])
+    await update.message.reply_text(
+        text[:4000]
+    )
 
 # ======================
-# START
-# ======================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Bot aktif")
-
-# ======================
-# INIT
+# POST INIT
 # ======================
 async def post_init(app):
-    asyncio.create_task(checker(app))
-    logger.info("BOT RUNNING")
+
+    asyncio.create_task(
+        checker(app)
+    )
+
+    logger.info(
+        "AUTO KICK CHECKER RUNNING"
+    )
 
 # ======================
 # MAIN
 # ======================
 def main():
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .build()
+    )
 
-    app.add_handler(CommandHandler("add", add))
-    app.add_handler(CommandHandler("member", member))
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button))
+    app.add_handler(
+        CommandHandler("start", start)
+    )
+
+    app.add_handler(
+        CommandHandler("add", add)
+    )
+
+    app.add_handler(
+        CommandHandler("member", member)
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(button)
+    )
 
     app.post_init = post_init
 
+    logger.info("BOT RUNNING...")
+
     app.run_polling()
 
+# ======================
+# START
+# ======================
 if __name__ == "__main__":
     main()
