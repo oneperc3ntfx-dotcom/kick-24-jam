@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS users (
 conn.commit()
 
 # ======================
-# PLAN MAP
+# PLAN
 # ======================
 PLAN = {
 
@@ -95,6 +95,11 @@ PLAN = {
         "price": "999K"
     }
 }
+
+# ======================
+# TEMP STORAGE
+# ======================
+pending_proofs = {}
 
 # ======================
 # START
@@ -138,20 +143,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 Selamat datang di Premium AI Signal Group 📈
 
-Signal dianalisa menggunakan:
+━━━━━━━━━━━━━━
 
 ✅ Smart Money Concept
-✅ Liquidity & Market Structure
-✅ Order Block Institution
-✅ News Impact Analysis
-✅ Market Bias AI System
+✅ Institutional Order Block
+✅ Liquidity & BOS Analysis
+✅ News Impact & Market Bias
+✅ AI Institutional Flow
 
-📊 Signal keluar setiap 1 jam sekali
+📊 Signal keluar setiap 1 jam
 📰 Disertai berita & rekomendasi bias market
 
 ━━━━━━━━━━━━━━
 
-💰 *PEMBAYARAN VIA BANK*
+💳 *PEMBAYARAN*
 
 🏦 BANK SMBC (JENIUS)
 💳 90240573080
@@ -159,13 +164,23 @@ Signal dianalisa menggunakan:
 
 ━━━━━━━━━━━━━━
 
-📌 Setelah transfer:
-Silahkan kirim bukti transfer berupa foto/screenshoot ke bot ini
+📌 Cara Bergabung:
+
+1. Pilih paket
+2. Transfer sesuai nominal
+3. Kirim bukti transfer
+4. Klik tombol konfirmasi transfer
+5. Tunggu verifikasi admin
+
+━━━━━━━━━━━━━━
 
 📞 Bantuan:
 @ADMOnePercentsFX
 
-⚡ Semoga profit bergabung bersama AI Signal kami 🚀
+⚡ Semoga profit bersama AI Signal kami 🚀
+
+📌 Jika ingin berlangganan lagi gunakan:
+/renew
 """,
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard)
@@ -175,7 +190,6 @@ Silahkan kirim bukti transfer berupa foto/screenshoot ke bot ini
 # RENEW
 # ======================
 async def renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     await start(update, context)
 
 # ======================
@@ -191,9 +205,9 @@ async def buy_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if plan_key not in PLAN:
         return
 
-    plan = PLAN[plan_key]
-
     context.user_data["selected_plan"] = plan_key
+
+    plan = PLAN[plan_key]
 
     await q.message.reply_text(
         f"""
@@ -217,9 +231,6 @@ async def buy_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 📌 Setelah transfer:
 Kirim bukti transfer berupa foto/screenshoot ke bot ini
-
-📞 Bantuan:
-@ADMOnePercentsFX
 """,
         parse_mode="Markdown"
     )
@@ -234,31 +245,75 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plan_key = context.user_data.get("selected_plan")
 
     if not plan_key:
+
         return await update.message.reply_text(
             """
 ⚠️ Kamu belum memilih paket
 
 Gunakan:
 /start
-
-Untuk memilih paket membership
 """
         )
 
-    plan = PLAN[plan_key]
-
     photo = update.message.photo[-1].file_id
+
+    pending_proofs[user.id] = {
+        "photo": photo,
+        "plan": plan_key
+    }
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "✅ Saya Sudah Transfer",
+                callback_data=f"confirm_{user.id}"
+            )
+        ]
+    ]
+
+    await update.message.reply_text(
+        """
+📥 Bukti transfer berhasil diterima
+
+Jika transfer sudah berhasil dilakukan,
+silahkan klik tombol di bawah ini untuk mengirim bukti transfer ke admin.
+""",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# ======================
+# CONFIRM TRANSFER
+# ======================
+async def confirm_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    q = update.callback_query
+    await q.answer()
+
+    user_id = int(q.data.split("_")[1])
+
+    if q.from_user.id != user_id:
+        return
+
+    if user_id not in pending_proofs:
+        return
+
+    data = pending_proofs[user_id]
+
+    photo = data["photo"]
+    plan_key = data["plan"]
+
+    plan = PLAN[plan_key]
 
     keyboard = [
         [
             InlineKeyboardButton(
                 "✅ APPROVE",
-                callback_data=f"approve_{plan_key}_{user.id}"
+                callback_data=f"approve_{plan_key}_{user_id}"
             ),
 
             InlineKeyboardButton(
                 "❌ REJECT",
-                callback_data=f"reject_{user.id}"
+                callback_data=f"reject_{user_id}"
             )
         ]
     ]
@@ -266,11 +321,8 @@ Untuk memilih paket membership
     caption = f"""
 📥 BUKTI TRANSFER MASUK
 
-👤 USER:
-{user.full_name}
-
-🆔 ID:
-{user.id}
+👤 USER ID:
+{user_id}
 
 📦 PLAN:
 {plan['label']}
@@ -286,11 +338,11 @@ Untuk memilih paket membership
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-    await update.message.reply_text(
+    await q.edit_message_text(
         """
-✅ Bukti transfer berhasil dikirim
+✅ Bukti transfer berhasil dikirim ke admin
 
-Mohon tunggu admin melakukan verifikasi pembayaran ⏳
+Mohon tunggu proses verifikasi pembayaran ⏳
 """
     )
 
@@ -323,7 +375,6 @@ async def admin_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         expire = now + timedelta(days=plan["days"])
 
-        # save DB
         cursor.execute("""
             INSERT OR REPLACE INTO users
             VALUES (?, ?, ?, ?, ?, ?)
@@ -338,14 +389,12 @@ async def admin_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         conn.commit()
 
-        # create invite
         invite = await context.bot.create_chat_invite_link(
             chat_id=GROUP_ID,
             member_limit=1,
             expire_date=now + timedelta(minutes=5)
         )
 
-        # send to member
         await context.bot.send_message(
             chat_id=user_id,
             text=f"""
@@ -370,6 +419,9 @@ async def admin_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ⚠️ Membership auto kick saat expired
 
 🚀 Semoga profit bersama AI Signal kami
+
+📌 Jika ingin berlangganan lagi gunakan:
+/renew
 """,
             parse_mode="Markdown"
         )
@@ -388,16 +440,19 @@ async def admin_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(
             chat_id=user_id,
             text="""
-❌ TRANSAKSI DITOLAK
+❌ *TRANSAKSI DITOLAK*
 
-Nominal transfer tidak sesuai
-atau bukti transfer tidak valid
+Transaksi yang kamu lakukan salah
+atau nominal transfer tidak sesuai
+dengan paket langganan yang dipilih.
 
-Silahkan transfer ulang sesuai paket yang dipilih
+Silahkan cek kembali nominal pembayaran
+dan kirim ulang bukti transfer yang benar.
 
 📞 Bantuan:
 @ADMOnePercentsFX
-"""
+""",
+            parse_mode="Markdown"
         )
 
         await q.edit_message_caption(
@@ -419,7 +474,8 @@ Gunakan menu berikut:
 /renew → perpanjang membership
 
 📌 Jika sudah transfer:
-kirim bukti transfer berupa foto/screenshoot ke bot ini
+1. Kirim bukti transfer
+2. Klik tombol konfirmasi transfer
 
 📞 Bantuan:
 @ADMOnePercentsFX
@@ -456,7 +512,6 @@ async def checker(app):
                     expire_time
                 )
 
-                # expired
                 if now >= exp_dt:
 
                     try:
@@ -483,23 +538,6 @@ async def checker(app):
                         logger.info(
                             f"KICKED {user_id}"
                         )
-
-                        try:
-
-                            await app.bot.send_message(
-                                chat_id=user_id,
-                                text="""
-⛔ Membership kamu telah expired
-
-Silahkan renew untuk mendapatkan akses kembali
-
-Gunakan:
-/renew
-"""
-                            )
-
-                        except:
-                            pass
 
                     except Exception as e:
 
@@ -596,6 +634,13 @@ def main():
         CallbackQueryHandler(
             buy_button,
             pattern="^buy_"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            confirm_transfer,
+            pattern="^confirm_"
         )
     )
 
