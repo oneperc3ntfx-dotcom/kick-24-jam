@@ -4,6 +4,7 @@ import os
 import sqlite3
 import asyncio
 import logging
+
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
@@ -18,8 +19,8 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
-    ContextTypes,
     MessageHandler,
+    ContextTypes,
     filters
 )
 
@@ -40,7 +41,7 @@ if not BOT_TOKEN:
 # ======================
 logging.basicConfig(level=logging.INFO)
 
-logger = logging.getLogger("PREMIUM-BOT")
+logger = logging.getLogger("MEMBER-BOT")
 
 # ======================
 # DATABASE
@@ -57,133 +58,121 @@ CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     username TEXT,
     full_name TEXT,
-    plan TEXT,
-    expire_time TEXT
+    join_time TEXT,
+    expire_time TEXT,
+    plan TEXT
 )
 """)
 
 conn.commit()
 
 # ======================
-# PLAN
+# PLAN MAP
 # ======================
 PLAN = {
-    "1d": {
+
+    "24h": {
         "days": 1,
         "label": "1 Hari",
-        "price": "25.000"
+        "price": "25K"
     },
 
     "7d": {
         "days": 7,
         "label": "7 Hari",
-        "price": "49.000"
+        "price": "49K"
     },
 
     "1m": {
         "days": 30,
         "label": "1 Bulan",
-        "price": "99.000"
+        "price": "99K"
     },
 
     "1y": {
         "days": 365,
         "label": "1 Tahun",
-        "price": "999.000"
+        "price": "999K"
     }
 }
 
 # ======================
-# TEMP PAYMENT STORAGE
-# ======================
-pending_users = {}
-
-# ======================
-# /START
+# START
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
+
         [
             InlineKeyboardButton(
                 "🔥 Join 1 Hari (25K)",
-                callback_data="buy_1d"
+                callback_data="buy_24h"
             )
         ],
 
         [
             InlineKeyboardButton(
-                "⚡ Join 7 Hari (49K)",
+                "🚀 Join 7 Hari (49K)",
                 callback_data="buy_7d"
             )
         ],
 
         [
             InlineKeyboardButton(
-                "🚀 Join 1 Bulan (99K)",
+                "👑 Join 1 Bulan (99K)",
                 callback_data="buy_1m"
             )
         ],
 
         [
             InlineKeyboardButton(
-                "👑 Join 1 Tahun (999K)",
+                "💎 Join 1 Tahun (999K)",
                 callback_data="buy_1y"
             )
         ]
     ]
 
     await update.message.reply_text(
-        f"""
+        """
 🤖 *ONE PERCENT FX PREMIUM*
 
-Selamat datang di Premium AI Signal 🔥
+Selamat datang di Premium AI Signal Group 📈
 
-📊 Signal dianalisa menggunakan:
+Signal dianalisa menggunakan:
 
 ✅ Smart Money Concept
-✅ Liquidity & Order Block
-✅ Institutional Flow
-✅ News Impact & Fundamental Bias
+✅ Liquidity & Market Structure
+✅ Order Block Institution
+✅ News Impact Analysis
+✅ Market Bias AI System
 
-⚡ Signal keluar setiap 1 jam sekali
-⚡ High probability setup only
-⚡ Cocok untuk scalping & intraday
+📊 Signal keluar setiap 1 jam sekali
+📰 Disertai berita & rekomendasi bias market
 
 ━━━━━━━━━━━━━━
 
-💳 *PEMBAYARAN MANUAL*
-
-Transfer ke rekening berikut:
+💰 *PEMBAYARAN VIA BANK*
 
 🏦 BANK SMBC (JENIUS)
 💳 90240573080
-👤 AN: YURIANDI ARMA
+👤 A/N YURIANDI ARMA
 
 ━━━━━━━━━━━━━━
 
 📌 Setelah transfer:
-Kirim bukti transfer ke bot ini
+Silahkan kirim bukti transfer berupa foto/screenshoot ke bot ini
 
-Admin akan mengecek pembayaran kamu lalu mengirimkan link premium otomatis ✅
-
-━━━━━━━━━━━━━━
-
-📞 Jika ada kendala:
+📞 Bantuan:
 @ADMOnePercentsFX
 
-━━━━━━━━━━━━━━
-
-🔄 Jika ingin berlangganan lagi:
-Gunakan command:
-/renew
+⚡ Semoga profit bergabung bersama AI Signal kami 🚀
 """,
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 # ======================
-# /RENEW
+# RENEW
 # ======================
 async def renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -192,204 +181,79 @@ async def renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ======================
 # BUY BUTTON
 # ======================
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def buy_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     q = update.callback_query
     await q.answer()
 
-    data = q.data
+    plan_key = q.data.replace("buy_", "")
 
-    # ======================
-    # USER BUY
-    # ======================
-    if data.startswith("buy_"):
+    if plan_key not in PLAN:
+        return
 
-        plan_key = data.split("_")[1]
+    plan = PLAN[plan_key]
 
-        if plan_key not in PLAN:
-            return
+    context.user_data["selected_plan"] = plan_key
 
-        plan = PLAN[plan_key]
+    await q.message.reply_text(
+        f"""
+📦 *PAKET DIPILIH*
 
-        user = q.from_user
-
-        pending_users[user.id] = {
-            "plan_key": plan_key
-        }
-
-        await q.message.reply_text(
-            f"""
-🧾 *DETAIL PEMBAYARAN*
-
-📦 Paket:
+📌 Paket:
 {plan['label']}
 
 💰 Harga:
-Rp {plan['price']}
+{plan['price']}
 
 ━━━━━━━━━━━━━━
+
+💳 Transfer ke:
 
 🏦 BANK SMBC (JENIUS)
 💳 90240573080
-👤 AN: YURIANDI ARMA
+👤 A/N YURIANDI ARMA
 
 ━━━━━━━━━━━━━━
 
-📌 Silahkan transfer sesuai nominal
+📌 Setelah transfer:
+Kirim bukti transfer berupa foto/screenshoot ke bot ini
 
-📤 Setelah transfer:
-Kirim foto bukti transfer ke bot ini
-
-⚠️ Admin akan mengecek pembayaran kamu terlebih dahulu
+📞 Bantuan:
+@ADMOnePercentsFX
 """,
-            parse_mode="Markdown"
-        )
-
-    # ======================
-    # APPROVE
-    # ======================
-    elif data.startswith("approve_"):
-
-        if q.from_user.id != ADMIN_ID:
-            return
-
-        user_id = int(data.split("_")[1])
-
-        if user_id not in pending_users:
-            return await q.answer("Data expired")
-
-        plan_key = pending_users[user_id]["plan_key"]
-
-        plan = PLAN[plan_key]
-
-        now = datetime.utcnow()
-
-        expire = now + timedelta(
-            days=plan["days"]
-        )
-
-        # ======================
-        # SAVE DB
-        # ======================
-        cursor.execute("""
-            INSERT OR REPLACE INTO users
-            VALUES (?, ?, ?, ?, ?)
-        """, (
-            user_id,
-            "unknown",
-            "unknown",
-            plan["label"],
-            expire.isoformat()
-        ))
-
-        conn.commit()
-
-        # ======================
-        # CREATE INVITE
-        # ======================
-        invite = await context.bot.create_chat_invite_link(
-            chat_id=GROUP_ID,
-            member_limit=1,
-            expire_date=now + timedelta(minutes=5)
-        )
-
-        # ======================
-        # SEND TO USER
-        # ======================
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=f"""
-✅ *PEMBAYARAN BERHASIL*
-
-📦 Paket:
-{plan['label']}
-
-⏰ Expired:
-{expire.strftime('%Y-%m-%d %H:%M UTC')}
-
-━━━━━━━━━━━━━━
-
-🔗 LINK PREMIUM:
-{invite.invite_link}
-
-⚠️ Link hanya bisa dipakai 1x
-⚠️ Link expired dalam 5 menit
-
-━━━━━━━━━━━━━━
-
-🔥 Selamat bergabung di AI Signal Premium
-
-Semoga profit bersama One Percent FX 🚀📈
-
-━━━━━━━━━━━━━━
-
-🔄 Jika ingin perpanjang membership:
-Ketik:
-/renew
-""",
-            parse_mode="Markdown"
-        )
-
-        await q.edit_message_caption(
-            caption="✅ PAYMENT APPROVED"
-        )
-
-        del pending_users[user_id]
-
-    # ======================
-    # REJECT
-    # ======================
-    elif data.startswith("reject_"):
-
-        if q.from_user.id != ADMIN_ID:
-            return
-
-        user_id = int(data.split("_")[1])
-
-        try:
-
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="""
-❌ *TRANSAKSI DITOLAK*
-
-Nominal transfer tidak sesuai
-atau bukti transfer tidak valid
-
-Silahkan transfer ulang sesuai paket yang dipilih
-""",
-                parse_mode="Markdown"
-            )
-
-        except:
-            pass
-
-        await q.edit_message_caption(
-            caption="❌ PAYMENT REJECTED"
-        )
+        parse_mode="Markdown"
+    )
 
 # ======================
-# HANDLE PHOTO
+# PHOTO HANDLER
 # ======================
-async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.effective_user
 
-    if user.id not in pending_users:
+    plan_key = context.user_data.get("selected_plan")
 
+    if not plan_key:
         return await update.message.reply_text(
-            "Silahkan pilih paket terlebih dahulu dengan /start"
+            """
+⚠️ Kamu belum memilih paket
+
+Gunakan:
+/start
+
+Untuk memilih paket membership
+"""
         )
 
-    plan_key = pending_users[user.id]["plan_key"]
-
     plan = PLAN[plan_key]
+
+    photo = update.message.photo[-1].file_id
 
     keyboard = [
         [
             InlineKeyboardButton(
                 "✅ APPROVE",
-                callback_data=f"approve_{user.id}"
+                callback_data=f"approve_{plan_key}_{user.id}"
             ),
 
             InlineKeyboardButton(
@@ -411,13 +275,13 @@ async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 📦 PLAN:
 {plan['label']}
 
-💰 NOMINAL:
-Rp {plan['price']}
+💰 PRICE:
+{plan['price']}
 """
 
     await context.bot.send_photo(
         chat_id=ADMIN_ID,
-        photo=update.message.photo[-1].file_id,
+        photo=photo,
         caption=caption,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -426,7 +290,139 @@ Rp {plan['price']}
         """
 ✅ Bukti transfer berhasil dikirim
 
-Mohon tunggu admin melakukan pengecekan pembayaran
+Mohon tunggu admin melakukan verifikasi pembayaran ⏳
+"""
+    )
+
+# ======================
+# ADMIN BUTTON
+# ======================
+async def admin_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    q = update.callback_query
+    await q.answer()
+
+    if q.from_user.id != ADMIN_ID:
+        return
+
+    data = q.data.split("_")
+
+    action = data[0]
+
+    # ======================
+    # APPROVE
+    # ======================
+    if action == "approve":
+
+        plan_key = data[1]
+        user_id = int(data[2])
+
+        plan = PLAN[plan_key]
+
+        now = datetime.utcnow()
+
+        expire = now + timedelta(days=plan["days"])
+
+        # save DB
+        cursor.execute("""
+            INSERT OR REPLACE INTO users
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            "unknown",
+            "unknown",
+            now.isoformat(),
+            expire.isoformat(),
+            plan["label"]
+        ))
+
+        conn.commit()
+
+        # create invite
+        invite = await context.bot.create_chat_invite_link(
+            chat_id=GROUP_ID,
+            member_limit=1,
+            expire_date=now + timedelta(minutes=5)
+        )
+
+        # send to member
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"""
+🎉 *PEMBAYARAN BERHASIL DIKONFIRMASI*
+
+📦 Paket:
+{plan['label']}
+
+⏰ Expired:
+{expire.strftime('%Y-%m-%d %H:%M UTC')}
+
+━━━━━━━━━━━━━━
+
+🔗 LINK JOIN GROUP:
+
+{invite.invite_link}
+
+━━━━━━━━━━━━━━
+
+⚠️ Link hanya bisa dipakai 1x
+⚠️ Link expired dalam 5 menit
+⚠️ Membership auto kick saat expired
+
+🚀 Semoga profit bersama AI Signal kami
+""",
+            parse_mode="Markdown"
+        )
+
+        await q.edit_message_caption(
+            caption=q.message.caption + "\n\n✅ APPROVED"
+        )
+
+    # ======================
+    # REJECT
+    # ======================
+    elif action == "reject":
+
+        user_id = int(data[1])
+
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="""
+❌ TRANSAKSI DITOLAK
+
+Nominal transfer tidak sesuai
+atau bukti transfer tidak valid
+
+Silahkan transfer ulang sesuai paket yang dipilih
+
+📞 Bantuan:
+@ADMOnePercentsFX
+"""
+        )
+
+        await q.edit_message_caption(
+            caption=q.message.caption + "\n\n❌ REJECTED"
+        )
+
+# ======================
+# AUTO REPLY RANDOM CHAT
+# ======================
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    await update.message.reply_text(
+        """
+🤖 ONE PERCENT FX PREMIUM
+
+Gunakan menu berikut:
+
+/start → lihat paket premium
+/renew → perpanjang membership
+
+📌 Jika sudah transfer:
+kirim bukti transfer berupa foto/screenshoot ke bot ini
+
+📞 Bantuan:
+@ADMOnePercentsFX
 """
     )
 
@@ -460,6 +456,7 @@ async def checker(app):
                     expire_time
                 )
 
+                # expired
                 if now >= exp_dt:
 
                     try:
@@ -494,10 +491,10 @@ async def checker(app):
                                 text="""
 ⛔ Membership kamu telah expired
 
-Terima kasih sudah bergabung bersama One Percent FX 🔥
+Silahkan renew untuk mendapatkan akses kembali
 
-Untuk berlangganan lagi:
-Ketik /renew
+Gunakan:
+/renew
 """
                             )
 
@@ -544,10 +541,14 @@ async def member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for r in rows:
 
+        user_id = r[0]
+        expire_time = r[4]
+        plan = r[5]
+
         text += (
-            f"🆔 {r[0]}\n"
-            f"📦 {r[3]}\n"
-            f"⏰ {r[4]}\n"
+            f"🆔 ID: {user_id}\n"
+            f"📦 Plan: {plan}\n"
+            f"📅 Expire: {expire_time}\n"
             f"━━━━━━━━━━━━━━\n"
         )
 
@@ -565,7 +566,7 @@ async def post_init(app):
     )
 
     logger.info(
-        "AUTO KICK RUNNING"
+        "AUTO KICK CHECKER RUNNING"
     )
 
 # ======================
@@ -592,13 +593,30 @@ def main():
     )
 
     app.add_handler(
-        CallbackQueryHandler(button)
+        CallbackQueryHandler(
+            buy_button,
+            pattern="^buy_"
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            admin_button,
+            pattern="^(approve|reject)_"
+        )
     )
 
     app.add_handler(
         MessageHandler(
             filters.PHOTO,
-            photo
+            photo_handler
+        )
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            text_handler
         )
     )
 
