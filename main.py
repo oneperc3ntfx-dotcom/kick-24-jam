@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
+
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -17,7 +18,9 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
-    ContextTypes
+    ContextTypes,
+    MessageHandler,
+    filters
 )
 
 # ======================
@@ -37,7 +40,7 @@ if not BOT_TOKEN:
 # ======================
 logging.basicConfig(level=logging.INFO)
 
-logger = logging.getLogger("MEMBER-BOT")
+logger = logging.getLogger("PREMIUM-BOT")
 
 # ======================
 # DATABASE
@@ -54,188 +57,376 @@ CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     username TEXT,
     full_name TEXT,
-    join_time TEXT,
-    expire_time TEXT,
-    plan TEXT
+    plan TEXT,
+    expire_time TEXT
 )
 """)
 
 conn.commit()
 
 # ======================
-# PLAN MAP
+# PLAN
 # ======================
 PLAN = {
-    "24h": {
+    "1d": {
         "days": 1,
-        "label": "24 Jam"
+        "label": "1 Hari",
+        "price": "25.000"
     },
 
     "7d": {
         "days": 7,
-        "label": "7 Hari"
+        "label": "7 Hari",
+        "price": "49.000"
     },
 
     "1m": {
         "days": 30,
-        "label": "1 Bulan"
+        "label": "1 Bulan",
+        "price": "99.000"
     },
 
     "1y": {
         "days": 365,
-        "label": "1 Tahun"
+        "label": "1 Tahun",
+        "price": "999.000"
     }
 }
+
+# ======================
+# TEMP PAYMENT STORAGE
+# ======================
+pending_users = {}
 
 # ======================
 # /START
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    await update.message.reply_text(
-        "🤖 MEMBER BOT ACTIVE"
-    )
-
-# ======================
-# /ADD USER
-# ======================
-async def add(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    if not context.args:
-
-        return await update.message.reply_text(
-            "Usage:\n/add USER_ID"
-        )
-
-    try:
-        user_id = int(context.args[0])
-
-    except:
-        return await update.message.reply_text(
-            "USER ID invalid"
-        )
-
     keyboard = [
         [
             InlineKeyboardButton(
-                "24 Jam",
-                callback_data=f"plan_24h_{user_id}"
-            ),
-
-            InlineKeyboardButton(
-                "7 Hari",
-                callback_data=f"plan_7d_{user_id}"
+                "🔥 Join 1 Hari (25K)",
+                callback_data="buy_1d"
             )
         ],
 
         [
             InlineKeyboardButton(
-                "1 Bulan",
-                callback_data=f"plan_1m_{user_id}"
-            ),
+                "⚡ Join 7 Hari (49K)",
+                callback_data="buy_7d"
+            )
+        ],
 
+        [
             InlineKeyboardButton(
-                "1 Tahun",
-                callback_data=f"plan_1y_{user_id}"
+                "🚀 Join 1 Bulan (99K)",
+                callback_data="buy_1m"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "👑 Join 1 Tahun (999K)",
+                callback_data="buy_1y"
             )
         ]
     ]
 
     await update.message.reply_text(
         f"""
-👤 SET MEMBER
+🤖 *ONE PERCENT FX PREMIUM*
 
-🆔 USER ID: {user_id}
+Selamat datang di Premium AI Signal 🔥
 
-Pilih durasi membership:
+📊 Signal dianalisa menggunakan:
+
+✅ Smart Money Concept
+✅ Liquidity & Order Block
+✅ Institutional Flow
+✅ News Impact & Fundamental Bias
+
+⚡ Signal keluar setiap 1 jam sekali
+⚡ High probability setup only
+⚡ Cocok untuk scalping & intraday
+
+━━━━━━━━━━━━━━
+
+💳 *PEMBAYARAN MANUAL*
+
+Transfer ke rekening berikut:
+
+🏦 BANK SMBC (JENIUS)
+💳 90240573080
+👤 AN: YURIANDI ARMA
+
+━━━━━━━━━━━━━━
+
+📌 Setelah transfer:
+Kirim bukti transfer ke bot ini
+
+Admin akan mengecek pembayaran kamu lalu mengirimkan link premium otomatis ✅
+
+━━━━━━━━━━━━━━
+
+📞 Jika ada kendala:
+@ADMOnePercentsFX
+
+━━━━━━━━━━━━━━
+
+🔄 Jika ingin berlangganan lagi:
+Gunakan command:
+/renew
 """,
+        parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 # ======================
-# BUTTON HANDLER
+# /RENEW
+# ======================
+async def renew(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    await start(update, context)
+
+# ======================
+# BUY BUTTON
 # ======================
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     q = update.callback_query
-
     await q.answer()
 
-    if q.from_user.id != ADMIN_ID:
-        return
-
-    try:
-
-        _, plan_key, user_id = q.data.split("_")
-
-        user_id = int(user_id)
-
-    except:
-        return
-
-    if plan_key not in PLAN:
-        return
-
-    days = PLAN[plan_key]["days"]
-    label = PLAN[plan_key]["label"]
-
-    now = datetime.utcnow()
-
-    expire = now + timedelta(days=days)
+    data = q.data
 
     # ======================
-    # SAVE DB
+    # USER BUY
     # ======================
-    cursor.execute("""
-        INSERT OR REPLACE INTO users
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (
-        user_id,
-        "unknown",
-        "unknown",
-        now.isoformat(),
-        expire.isoformat(),
-        label
-    ))
+    if data.startswith("buy_"):
 
-    conn.commit()
+        plan_key = data.split("_")[1]
+
+        if plan_key not in PLAN:
+            return
+
+        plan = PLAN[plan_key]
+
+        user = q.from_user
+
+        pending_users[user.id] = {
+            "plan_key": plan_key
+        }
+
+        await q.message.reply_text(
+            f"""
+🧾 *DETAIL PEMBAYARAN*
+
+📦 Paket:
+{plan['label']}
+
+💰 Harga:
+Rp {plan['price']}
+
+━━━━━━━━━━━━━━
+
+🏦 BANK SMBC (JENIUS)
+💳 90240573080
+👤 AN: YURIANDI ARMA
+
+━━━━━━━━━━━━━━
+
+📌 Silahkan transfer sesuai nominal
+
+📤 Setelah transfer:
+Kirim foto bukti transfer ke bot ini
+
+⚠️ Admin akan mengecek pembayaran kamu terlebih dahulu
+""",
+            parse_mode="Markdown"
+        )
 
     # ======================
-    # CREATE SINGLE USE LINK
+    # APPROVE
     # ======================
-    invite = await context.bot.create_chat_invite_link(
-        chat_id=GROUP_ID,
+    elif data.startswith("approve_"):
 
-        member_limit=1,
+        if q.from_user.id != ADMIN_ID:
+            return
 
-        expire_date=now + timedelta(minutes=2)
-    )
+        user_id = int(data.split("_")[1])
 
-    # ======================
-    # SEND RESULT
-    # ======================
-    await q.edit_message_text(
-        f"""
-✅ MEMBER BERHASIL DIBUAT
+        if user_id not in pending_users:
+            return await q.answer("Data expired")
 
-🆔 USER ID:
-{user_id}
+        plan_key = pending_users[user_id]["plan_key"]
 
-📦 PLAN:
-{label}
+        plan = PLAN[plan_key]
 
-⏰ EXPIRE:
+        now = datetime.utcnow()
+
+        expire = now + timedelta(
+            days=plan["days"]
+        )
+
+        # ======================
+        # SAVE DB
+        # ======================
+        cursor.execute("""
+            INSERT OR REPLACE INTO users
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            "unknown",
+            "unknown",
+            plan["label"],
+            expire.isoformat()
+        ))
+
+        conn.commit()
+
+        # ======================
+        # CREATE INVITE
+        # ======================
+        invite = await context.bot.create_chat_invite_link(
+            chat_id=GROUP_ID,
+            member_limit=1,
+            expire_date=now + timedelta(minutes=5)
+        )
+
+        # ======================
+        # SEND TO USER
+        # ======================
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"""
+✅ *PEMBAYARAN BERHASIL*
+
+📦 Paket:
+{plan['label']}
+
+⏰ Expired:
 {expire.strftime('%Y-%m-%d %H:%M UTC')}
 
-🔗 LINK INVITE:
+━━━━━━━━━━━━━━
+
+🔗 LINK PREMIUM:
 {invite.invite_link}
 
 ⚠️ Link hanya bisa dipakai 1x
-⚠️ Link expired dalam 2 menit
-⚠️ Member auto kick saat expired
+⚠️ Link expired dalam 5 menit
+
+━━━━━━━━━━━━━━
+
+🔥 Selamat bergabung di AI Signal Premium
+
+Semoga profit bersama One Percent FX 🚀📈
+
+━━━━━━━━━━━━━━
+
+🔄 Jika ingin perpanjang membership:
+Ketik:
+/renew
+""",
+            parse_mode="Markdown"
+        )
+
+        await q.edit_message_caption(
+            caption="✅ PAYMENT APPROVED"
+        )
+
+        del pending_users[user_id]
+
+    # ======================
+    # REJECT
+    # ======================
+    elif data.startswith("reject_"):
+
+        if q.from_user.id != ADMIN_ID:
+            return
+
+        user_id = int(data.split("_")[1])
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="""
+❌ *TRANSAKSI DITOLAK*
+
+Nominal transfer tidak sesuai
+atau bukti transfer tidak valid
+
+Silahkan transfer ulang sesuai paket yang dipilih
+""",
+                parse_mode="Markdown"
+            )
+
+        except:
+            pass
+
+        await q.edit_message_caption(
+            caption="❌ PAYMENT REJECTED"
+        )
+
+# ======================
+# HANDLE PHOTO
+# ======================
+async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    user = update.effective_user
+
+    if user.id not in pending_users:
+
+        return await update.message.reply_text(
+            "Silahkan pilih paket terlebih dahulu dengan /start"
+        )
+
+    plan_key = pending_users[user.id]["plan_key"]
+
+    plan = PLAN[plan_key]
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "✅ APPROVE",
+                callback_data=f"approve_{user.id}"
+            ),
+
+            InlineKeyboardButton(
+                "❌ REJECT",
+                callback_data=f"reject_{user.id}"
+            )
+        ]
+    ]
+
+    caption = f"""
+📥 BUKTI TRANSFER MASUK
+
+👤 USER:
+{user.full_name}
+
+🆔 ID:
+{user.id}
+
+📦 PLAN:
+{plan['label']}
+
+💰 NOMINAL:
+Rp {plan['price']}
+"""
+
+    await context.bot.send_photo(
+        chat_id=ADMIN_ID,
+        photo=update.message.photo[-1].file_id,
+        caption=caption,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+    await update.message.reply_text(
+        """
+✅ Bukti transfer berhasil dikirim
+
+Mohon tunggu admin melakukan pengecekan pembayaran
 """
     )
 
@@ -269,26 +460,20 @@ async def checker(app):
                     expire_time
                 )
 
-                # ======================
-                # EXPIRED
-                # ======================
                 if now >= exp_dt:
 
                     try:
 
-                        # BAN
                         await app.bot.ban_chat_member(
                             chat_id=GROUP_ID,
                             user_id=user_id
                         )
 
-                        # UNBAN
                         await app.bot.unban_chat_member(
                             chat_id=GROUP_ID,
                             user_id=user_id
                         )
 
-                        # DELETE DB
                         cursor.execute("""
                             DELETE FROM users
                             WHERE user_id=?
@@ -302,18 +487,17 @@ async def checker(app):
                             f"KICKED {user_id}"
                         )
 
-                        # NOTIFY ADMIN
                         try:
 
                             await app.bot.send_message(
-                                chat_id=ADMIN_ID,
-                                text=f"""
-⛔ MEMBER EXPIRED
+                                chat_id=user_id,
+                                text="""
+⛔ Membership kamu telah expired
 
-🆔 USER:
-{user_id}
+Terima kasih sudah bergabung bersama One Percent FX 🔥
 
-Member berhasil di kick otomatis
+Untuk berlangganan lagi:
+Ketik /renew
 """
                             )
 
@@ -360,17 +544,10 @@ async def member(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for r in rows:
 
-        user_id = r[0]
-        username = r[1]
-        full_name = r[2]
-        join_time = r[3]
-        expire_time = r[4]
-        plan = r[5]
-
         text += (
-            f"🆔 ID: {user_id}\n"
-            f"📦 Plan: {plan}\n"
-            f"📅 Expire: {expire_time}\n"
+            f"🆔 {r[0]}\n"
+            f"📦 {r[3]}\n"
+            f"⏰ {r[4]}\n"
             f"━━━━━━━━━━━━━━\n"
         )
 
@@ -388,7 +565,7 @@ async def post_init(app):
     )
 
     logger.info(
-        "AUTO KICK CHECKER RUNNING"
+        "AUTO KICK RUNNING"
     )
 
 # ======================
@@ -407,7 +584,7 @@ def main():
     )
 
     app.add_handler(
-        CommandHandler("add", add)
+        CommandHandler("renew", renew)
     )
 
     app.add_handler(
@@ -416,6 +593,13 @@ def main():
 
     app.add_handler(
         CallbackQueryHandler(button)
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.PHOTO,
+            photo
+        )
     )
 
     app.post_init = post_init
