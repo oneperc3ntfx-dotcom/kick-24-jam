@@ -7,7 +7,12 @@ import logging
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
+
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -33,10 +38,10 @@ if not BOT_TOKEN:
 # LOGGING
 # ======================
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("BOT")
+logger = logging.getLogger("MEMBER-BOT")
 
 # ======================
-# DB
+# DATABASE
 # ======================
 conn = sqlite3.connect("users.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -66,40 +71,36 @@ PLAN = {
 pending_proofs = {}
 
 # ======================
-# START
+# START MENU
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
-        [InlineKeyboardButton("🔥 1 Hari", callback_data="buy_24h")],
-        [InlineKeyboardButton("🚀 7 Hari", callback_data="buy_7d")],
-        [InlineKeyboardButton("👑 1 Bulan", callback_data="buy_1m")],
-        [InlineKeyboardButton("💎 1 Tahun", callback_data="buy_1y")]
+        [InlineKeyboardButton("🔥 Join 1 Hari (25K)", callback_data="buy_24h")],
+        [InlineKeyboardButton("🚀 Join 7 Hari (49K)", callback_data="buy_7d")],
+        [InlineKeyboardButton("👑 Join 1 Bulan (99K)", callback_data="buy_1m")],
+        [InlineKeyboardButton("💎 Join 1 Tahun (999K)", callback_data="buy_1y")]
     ]
 
     await update.message.reply_text(
-        "Pilih paket:",
+        "🤖 ONE PERCENT FX PREMIUM\n\nPilih paket:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 # ======================
-# CALLBACK BUY (FIXED 100%)
+# BUY BUTTON (FIXED)
 # ======================
 async def buy_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     q = update.callback_query
 
-    print("🔥 CALLBACK RECEIVED:", q.data)
-
     try:
-        await q.answer()  # WAJIB
+        await q.answer()
 
         plan_key = q.data.replace("buy_", "")
 
-        print("📦 PLAN:", plan_key)
-
         if plan_key not in PLAN:
-            await q.message.reply_text("❌ INVALID PLAN")
+            await q.message.reply_text("❌ Paket tidak valid")
             return
 
         context.user_data["selected_plan"] = plan_key
@@ -107,22 +108,21 @@ async def buy_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await q.message.reply_text(
             f"""
-📦 PILIHAN:
+📦 PAKET DIPILIH
 
-{plan['label']}
+📌 {plan['label']}
 💰 {plan['price']}
-"""
+
+Silahkan transfer lalu kirim bukti.
+""",
         )
 
     except Exception as e:
-        print("❌ BUY ERROR:", e)
-        try:
-            await q.answer("ERROR", show_alert=True)
-        except:
-            pass
+        logger.error(f"BUY ERROR: {e}")
+        await q.answer("Error, coba lagi", show_alert=True)
 
 # ======================
-# PHOTO
+# PHOTO HANDLER
 # ======================
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -130,18 +130,50 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plan_key = context.user_data.get("selected_plan")
 
     if not plan_key:
-        await update.message.reply_text("Pilih paket dulu /start")
+        await update.message.reply_text("⚠️ Pilih paket dulu /start")
         return
 
+    photo = update.message.photo[-1].file_id
+
     pending_proofs[user.id] = {
-        "photo": update.message.photo[-1].file_id,
+        "photo": photo,
         "plan": plan_key
     }
 
-    await update.message.reply_text("📥 Bukti diterima")
+    keyboard = [
+        [InlineKeyboardButton("✅ Konfirmasi", callback_data=f"confirm_{user.id}")]
+    ]
+
+    await update.message.reply_text(
+        "📥 Bukti diterima, klik konfirmasi.",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 # ======================
-# ADMIN APPROVE / REJECT
+# CONFIRM (ADMIN FLOW SIMPLIFIED)
+# ======================
+async def confirm_transfer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    q = update.callback_query
+    await q.answer()
+
+    user_id = int(q.data.split("_")[1])
+
+    if user_id not in pending_proofs:
+        return
+
+    data = pending_proofs[user_id]
+
+    await context.bot.send_photo(
+        chat_id=ADMIN_ID,
+        photo=data["photo"],
+        caption=f"BUKTI USER {user_id}"
+    )
+
+    await q.edit_message_text("✅ Dikirim ke admin")
+
+# ======================
+# ADMIN ACTION
 # ======================
 async def admin_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -170,6 +202,7 @@ async def admin_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             expire.isoformat(),
             plan["label"]
         ))
+
         conn.commit()
 
         await context.bot.send_message(
@@ -177,7 +210,7 @@ async def admin_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"✅ Approved sampai {expire}"
         )
 
-        await q.edit_message_text("APPROVED")
+        await q.edit_message_caption("APPROVED")
 
     elif action == "reject":
 
@@ -185,24 +218,24 @@ async def admin_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await context.bot.send_message(
             chat_id=user_id,
-            text="❌ REJECTED"
+            text="❌ Ditolak"
         )
 
-        await q.edit_message_text("REJECTED")
+        await q.edit_message_caption("REJECTED")
 
 # ======================
 # TEXT HANDLER
 # ======================
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     await update.message.reply_text("Gunakan /start")
 
 # ======================
-# CHECKER AUTO KICK
+# AUTO CHECKER
 # ======================
 async def checker(app):
 
     while True:
-
         now = datetime.utcnow()
 
         cursor.execute("SELECT user_id, expire_time FROM users")
@@ -210,22 +243,21 @@ async def checker(app):
 
         for user_id, exp in rows:
 
-            try:
-                if not exp:
-                    continue
+            if not exp:
+                continue
 
-                if now >= datetime.fromisoformat(exp):
+            exp_dt = datetime.fromisoformat(exp)
 
+            if now >= exp_dt:
+                try:
                     await app.bot.ban_chat_member(GROUP_ID, user_id)
                     await app.bot.unban_chat_member(GROUP_ID, user_id)
 
                     cursor.execute("DELETE FROM users WHERE user_id=?", (user_id,))
                     conn.commit()
 
-                    print("KICKED:", user_id)
-
-            except Exception as e:
-                print("KICK ERROR:", e)
+                except Exception as e:
+                    logger.error(f"KICK ERROR: {e}")
 
         await asyncio.sleep(30)
 
@@ -234,7 +266,7 @@ async def checker(app):
 # ======================
 async def post_init(app):
     asyncio.create_task(checker(app))
-    print("CHECKER RUNNING")
+    logger.info("CHECKER RUNNING")
 
 # ======================
 # MAIN
@@ -246,6 +278,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
 
     app.add_handler(CallbackQueryHandler(buy_button, pattern="^buy_"))
+    app.add_handler(CallbackQueryHandler(confirm_transfer, pattern="^confirm_"))
     app.add_handler(CallbackQueryHandler(admin_button, pattern="^(approve|reject)_"))
 
     app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
